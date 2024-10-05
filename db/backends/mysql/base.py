@@ -98,11 +98,11 @@ class CursorWrapper:
 
 
 class DatabaseWrapper(BaseDatabaseWrapper):
+    # 定义数据库供应商为MySQL
     vendor = "mysql"
-    # This dictionary maps Field objects to their associated MySQL column
-    # types, as strings. Column-type strings can contain format strings; they'll
-    # be interpolated against the values of Field.__dict__ before being output.
-    # If a column type is set to None, it won't be included in the output.
+    # 这个字典将Field对象映射到它们关联的MySQL列类型，作为字符串
+    # 列类型字符串可以包含格式字符串；它们将在被输出之前针对Field.__dict__的值进行插值
+    # 如果列类型被设置为None，它将不会被包含在输出中
     data_types = {
         "AutoField": "integer AUTO_INCREMENT",
         "BigAutoField": "bigint AUTO_INCREMENT",
@@ -133,11 +133,9 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         "UUIDField": "char(32)",
     }
 
-    # For these data types:
-    # - MySQL < 8.0.13 doesn't accept default values and implicitly treats them
-    #   as nullable
-    # - all versions of MySQL and MariaDB don't support full width database
-    #   indexes
+    # 对于这些数据类型：
+    # - MySQL < 8.0.13不接受默认值，并隐式地将它们视为可空
+    # - 所有版本的MySQL和MariaDB不支持全宽度数据库索引
     _limited_data_types = (
         "tinyblob",
         "blob",
@@ -150,6 +148,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         "json",
     )
 
+    # 定义SQL查询操作符
     operators = {
         "exact": "= %s",
         "iexact": "LIKE %s",
@@ -165,14 +164,11 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         "iendswith": "LIKE %s",
     }
 
-    # The patterns below are used to generate SQL pattern lookup clauses when
-    # the right-hand side of the lookup isn't a raw string (it might be an expression
-    # or the result of a bilateral transformation).
-    # In those cases, special characters for LIKE operators (e.g. \, *, _) should be
-    # escaped on database side.
+    # 用于生成SQL模式查找子句的模式
+    # 当查找的右-hand side不是原始字符串时（可能是表达式或双边转换的结果），应使用这些模式
+    # 在这些情况下，LIKE操作符的特殊字符（例如\, *, _）应该在数据库侧进行转义
     #
-    # Note: we use str.format() here for readability as '%' is used as a wildcard for
-    # the LIKE operator.
+    # 注意：我们在这里使用str.format()来提高可读性，因为'%'是LIKE操作符的通配符
     pattern_esc = r"REPLACE(REPLACE(REPLACE({}, '\\', '\\\\'), '%%', '\%%'), '_', '\_')"
     pattern_ops = {
         "contains": "LIKE BINARY CONCAT('%%', {}, '%%')",
@@ -183,6 +179,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         "iendswith": "LIKE CONCAT('%%', {})",
     }
 
+    # 定义事务隔离级别
     isolation_levels = {
         "read uncommitted",
         "read committed",
@@ -190,9 +187,11 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         "serializable",
     }
 
+    # 关联数据库类
     Database = Database
+    # 关联模式编辑器类
     SchemaEditorClass = DatabaseSchemaEditor
-    # Classes instantiated in __init__().
+    # 在__init__()中实例化的类
     client_class = DatabaseClient
     creation_class = DatabaseCreation
     features_class = DatabaseFeatures

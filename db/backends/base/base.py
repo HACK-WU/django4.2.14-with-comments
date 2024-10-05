@@ -65,67 +65,66 @@ class BaseDatabaseWrapper:
     queries_limit = 9000
 
     def __init__(self, settings_dict, alias=DEFAULT_DB_ALIAS):
-        # Connection related attributes.
-        # The underlying database connection.
+        """
+        初始化数据库连接。
+
+        :param settings_dict: 包含数据库连接信息的字典，如数据库名、用户名等。
+        :param alias: 数据库别名，默认为DEFAULT_DB_ALIAS。
+        """
+        # 连接相关属性
         self.connection = None
-        # `settings_dict` should be a dictionary containing keys such as
-        # NAME, USER, etc. It's called `settings_dict` instead of `settings`
-        # to disambiguate it from Django settings modules.
+        # `settings_dict` 应该是一个包含数据库配置信息的字典，例如NAME、USER等键。
         self.settings_dict = settings_dict
         self.alias = alias
-        # Query logging in debug mode or when explicitly enabled.
+        # 在调试模式下或显式启用时记录查询日志
         self.queries_log = deque(maxlen=self.queries_limit)
         self.force_debug_cursor = False
 
-        # Transaction related attributes.
-        # Tracks if the connection is in autocommit mode. Per PEP 249, by
-        # default, it isn't.
+        # 事务相关属性
+        # 跟踪连接是否处于自动提交模式。根据PEP 249，默认不是。
         self.autocommit = False
-        # Tracks if the connection is in a transaction managed by 'atomic'.
+        # 跟踪连接是否由 'atomic' 管理的事务中。
         self.in_atomic_block = False
-        # Increment to generate unique savepoint ids.
+        # 递增以生成唯一的保存点ID。
         self.savepoint_state = 0
-        # List of savepoints created by 'atomic'.
+        # 由 'atomic' 创建的保存点列表。
         self.savepoint_ids = []
-        # Stack of active 'atomic' blocks.
+        # 活动的 'atomic' 块堆栈。
         self.atomic_blocks = []
-        # Tracks if the outermost 'atomic' block should commit on exit,
-        # ie. if autocommit was active on entry.
+        # 跟踪最外层的 'atomic' 块在退出时是否应该提交，
+        # 即进入时是否启用了自动提交。
         self.commit_on_exit = True
-        # Tracks if the transaction should be rolled back to the next
-        # available savepoint because of an exception in an inner block.
+        # 跟踪由于内部块中的异常而需要回滚到下一个可用保存点的情况。
         self.needs_rollback = False
         self.rollback_exc = None
 
-        # Connection termination related attributes.
+        # 连接终止相关属性
         self.close_at = None
         self.closed_in_transaction = False
         self.errors_occurred = False
         self.health_check_enabled = False
         self.health_check_done = False
 
-        # Thread-safety related attributes.
+        # 线程安全相关属性
         self._thread_sharing_lock = threading.Lock()
         self._thread_sharing_count = 0
         self._thread_ident = _thread.get_ident()
 
-        # A list of no-argument functions to run when the transaction commits.
-        # Each entry is an (sids, func, robust) tuple, where sids is a set of
-        # the active savepoint IDs when this function was registered and robust
-        # specifies whether it's allowed for the function to fail.
+        # 当事务提交时运行的无参数函数列表。
+        # 每个条目是一个 (sids, func, robust) 元组，其中sids是在注册此函数时活动的保存点ID集合，
+        # robust指定是否允许函数失败。
         self.run_on_commit = []
 
-        # Should we run the on-commit hooks the next time set_autocommit(True)
-        # is called?
+        # 下次调用set_autocommit(True)时是否应运行on-commit钩子？
         self.run_commit_hooks_on_set_autocommit_on = False
 
-        # A stack of wrappers to be invoked around execute()/executemany()
-        # calls. Each entry is a function taking five arguments: execute, sql,
-        # params, many, and context. It's the function's responsibility to
-        # call execute(sql, params, many, context).
+        # 在execute()/executemany()调用周围被调用的包装器堆栈。
+        # 每个条目是一个接受五个参数的函数：execute, sql, params, many, 和context。
+        # 函数负责调用execute(sql, params, many, context)。
         self.execute_wrappers = []
 
-        self.client = self.client_class(self)
+        # 初始化数据库客户端及相关类
+        self.client = self.client_class(self)x
         self.creation = self.creation_class(self)
         self.features = self.features_class(self)
         self.introspection = self.introspection_class(self)
@@ -206,8 +205,8 @@ class BaseDatabaseWrapper:
         version of Django.
         """
         if (
-            self.features.minimum_database_version is not None
-            and self.get_database_version() < self.features.minimum_database_version
+                self.features.minimum_database_version is not None
+                and self.get_database_version() < self.features.minimum_database_version
         ):
             db_version = ".".join(map(str, self.get_database_version()))
             min_db_version = ".".join(map(str, self.features.minimum_database_version))
@@ -295,6 +294,7 @@ class BaseDatabaseWrapper:
         Validate the connection is usable and perform database cursor wrapping.
         """
         self.validate_thread_sharing()
+        # 如果设置了DEBUG=True,那将返回一个CursorDebugWrapper对象
         if self.queries_logged:
             wrapped_cursor = self.make_debug_cursor(cursor)
         else:
@@ -302,9 +302,29 @@ class BaseDatabaseWrapper:
         return wrapped_cursor
 
     def _cursor(self, name=None):
+        """
+        创建并准备游标对象。
+
+        该方法负责在执行数据库操作前，确保数据库连接健康，并创建合适的游标。
+        它包含几个关键步骤：
+        1. 如果健康检查失败，则关闭连接。
+        2. 确保数据库连接已建立。
+        3. 在数据库错误的上下文中执行，捕获并处理数据库错误。
+        4. 创建游标，并对其进行必要的准备。
+
+        参数:
+        - name: 可选参数，用于标识游标的名字。
+
+        返回:
+        - 返回一个准备好的游标对象，用于执行SQL命令。
+        """
+        # 关闭健康检查失败的连接，确保数据库连接正常
         self.close_if_health_check_failed()
+        # 确保数据库连接已建立
         self.ensure_connection()
+        # 在数据库错误处理的上下文中执行游标创建和准备操作
         with self.wrap_database_errors:
+            # 创建并返回准备好的游标
             return self._prepare_cursor(self.create_cursor(name))
 
     def _commit(self):
@@ -465,7 +485,7 @@ class BaseDatabaseWrapper:
         return self.autocommit
 
     def set_autocommit(
-        self, autocommit, force_begin_transaction_with_broken_autocommit=False
+            self, autocommit, force_begin_transaction_with_broken_autocommit=False
     ):
         """
         Enable or disable autocommit.
@@ -483,9 +503,9 @@ class BaseDatabaseWrapper:
         self.ensure_connection()
 
         start_transaction_under_autocommit = (
-            force_begin_transaction_with_broken_autocommit
-            and not autocommit
-            and hasattr(self, "_start_transaction_under_autocommit")
+                force_begin_transaction_with_broken_autocommit
+                and not autocommit
+                and hasattr(self, "_start_transaction_under_autocommit")
         )
 
         if start_transaction_under_autocommit:
@@ -588,9 +608,9 @@ class BaseDatabaseWrapper:
     def close_if_health_check_failed(self):
         """Close existing connection if it fails a health check."""
         if (
-            self.connection is None
-            or not self.health_check_enabled
-            or self.health_check_done
+                self.connection is None
+                or not self.health_check_enabled
+                or self.health_check_done
         ):
             return
 
@@ -698,6 +718,7 @@ class BaseDatabaseWrapper:
         if it opened one, closes it to avoid leaving a dangling connection.
         This is useful for operations outside of the request-response cycle.
 
+        经过conextmanager修饰的函数，可以使用with的方式进行执行，具有了上下文管理的功能
         Provide a cursor: with self.temporary_connection() as cursor: ...
         """
         must_close = self.connection is None

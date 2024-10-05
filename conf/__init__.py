@@ -72,9 +72,12 @@ class LazySettings(LazyObject):
 
     def _setup(self, name=None):
         """
-        Load the settings module pointed to by the environment variable. This
-        is used the first time settings are needed, if the user hasn't
-        configured settings manually.
+        加载由环境变量指定的配置模块。此方法在首次需要配置项时调用，
+
+        步骤:
+            1. 从环境变量获取配置模块名。
+            2. 如果未找到配置模块，则根据提供的参数 `name` 构造错误信息并抛出异常。
+            3. 否则，使用获取到的模块名初始化 `Settings` 对象，并将其赋值给 `_wrapped`。
         """
         settings_module = os.environ.get(ENVIRONMENT_VARIABLE)
         if not settings_module:
@@ -97,19 +100,29 @@ class LazySettings(LazyObject):
         }
 
     def __getattr__(self, name):
-        """Return the value of a setting and cache it in self.__dict__."""
+        """
+        优化设置值获取过程，仅当被显式访问时才计算，并缓存结果以避免重复计算。
+
+        抛出:
+        如果SECRET_KEY设置为空，则抛出ImproperlyConfigured异常。
+        """
+        # 判断self._wrapped是否已被初始化，如果未初始化，则进行设置
         if (_wrapped := self._wrapped) is empty:
             self._setup(name)
             _wrapped = self._wrapped
+        
+        # 从已包装的对象中获取设置值
         val = getattr(_wrapped, name)
-
-        # Special case some settings which require further modification.
-        # This is done here for performance reasons so the modified value is cached.
+    
+        # 对特定设置进行特殊处理，这些处理可能包括修改值或抛出异常
         if name in {"MEDIA_URL", "STATIC_URL"} and val is not None:
+            # 对MEDIA_URL和STATIC_URL添加脚本前缀
             val = self._add_script_prefix(val)
         elif name == "SECRET_KEY" and not val:
+            # 如果SECRET_KEY为空，则抛出异常
             raise ImproperlyConfigured("The SECRET_KEY setting must not be empty.")
-
+    
+        # 将获取到的值缓存到self.__dict__中，以避免下次访问时重复计算
         self.__dict__[name] = val
         return val
 
@@ -206,6 +219,12 @@ class LazySettings(LazyObject):
 
 class Settings:
     def __init__(self, settings_module):
+        # 初始化函数，用于加载配置
+        # 参数:
+        #   - settings_module: 配置模块的路径，用于导入特定项目的配置
+        # 返回值:
+        #   无
+
         # update this dict from global settings (but only for ALL_CAPS settings)
         # 加载globa_settings配置文件
         for setting in dir(global_settings):
@@ -233,7 +252,7 @@ class Settings:
                 setting_value = getattr(mod, setting)
 
                 if setting in tuple_settings and not isinstance(
-                    setting_value, (list, tuple)
+                        setting_value, (list, tuple)
                 ):
                     raise ImproperlyConfigured(
                         "The %s setting must be a list or a tuple." % setting
@@ -241,6 +260,7 @@ class Settings:
                 setattr(self, setting, setting_value)
                 self._explicit_settings.add(setting)
 
+        # 检查并警告某些配置的未来变更
         if self.USE_TZ is False and not self.is_overridden("USE_TZ"):
             warnings.warn(
                 "The default value of USE_TZ will change from False to True "
@@ -255,6 +275,7 @@ class Settings:
         if self.is_overridden("CSRF_COOKIE_MASKED"):
             warnings.warn(CSRF_COOKIE_MASKED_DEPRECATED_MSG, RemovedInDjango50Warning)
 
+        # 验证并设置时区
         if hasattr(time, "tzset") and self.TIME_ZONE:
             # When we can, attempt to validate the timezone. If we can't find
             # this file, no check happens and it's harmless.
@@ -267,6 +288,7 @@ class Settings:
             os.environ["TZ"] = self.TIME_ZONE
             time.tzset()
 
+        # 更多的配置警告和处理
         if self.is_overridden("USE_L10N"):
             warnings.warn(USE_L10N_DEPRECATED_MSG, RemovedInDjango50Warning)
 

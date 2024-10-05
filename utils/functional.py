@@ -289,15 +289,30 @@ class LazyObject:
         self._wrapped = empty
 
     def __getattribute__(self, name):
+        """
+        重写__getattribute__方法，用于处理通过名称获取属性时的行为。
+        
+        参数:
+            name (str): 要获取的属性名称。
+            
+        返回:
+            value: 所请求的属性值，除非被特别处理。
+        """
+        # 当尝试获取属性"_wrapped"时，避免递归调用。
+        # 这是为了确保可以正常获取到wrapped对象。
         if name == "_wrapped":
-            # Avoid recursion when getting wrapped object.
             return super().__getattribute__(name)
+        
+        # 调用父类的__getattribute__方法获取属性值。
         value = super().__getattribute__(name)
-        # If attribute is a proxy method, raise an AttributeError to call
-        # __getattr__() and use the wrapped object method.
+        
+        # 检查属性是否是代理方法。
+        # 如果属性方法不隐藏wrapped对象（即代理方法），则引发AttributeError。
+        # 这将导致调用__getattr__方法，进而使用wrapped对象的方法。
         if not getattr(value, "_mask_wrapped", True):
             raise AttributeError
         return value
+
 
     __getattr__ = new_method_proxy(getattr)
 

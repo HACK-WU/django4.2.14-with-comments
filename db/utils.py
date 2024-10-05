@@ -136,26 +136,43 @@ def load_backend(backend_name):
 
 
 class ConnectionHandler(BaseConnectionHandler):
+    # 数据库配置的设置名称
     settings_name = "DATABASES"
-    # Connections needs to still be an actual thread local, as it's truly
-    # thread-critical. Database backends should use @async_unsafe to protect
-    # their code from async contexts, but this will give those contexts
-    # separate connections in case it's needed as well. There's no cleanup
-    # after async contexts, though, so we don't allow that if we can help it.
+    # 连接仍然需要线程本地化，因为它们具有关键性。
+    # 数据库后端应使用 @async_unsafe 保护其代码免受异步上下文的影响，
+    # 但这也会为这些上下文提供单独的连接（如果需要的话）。
+    # 但是，在异步上下文之后没有清理操作，因此尽可能避免这种情况。
     thread_critical = True
 
     def configure_settings(self, databases):
+        """
+        配置数据库设置。
+
+        该方法首先调用父类的 configure_settings 方法，
+        然后为每个数据库配置默认设置，包括：
+        - 如果未设置 'ENGINE'，则将其设置为 'django.db.backends.dummy'
+        - 设置 'ATOMIC_REQUESTS'、'AUTOCOMMIT'、'CONN_MAX_AGE'、
+          'CONN_HEALTH_CHECKS'、'OPTIONS'、'TIME_ZONE' 及其他设置的默认值
+        - 设置默认的测试设置
+
+        参数:
+        databases (dict): 数据库配置字典
+
+        返回:
+        dict: 配置后的数据库设置
+        """
         databases = super().configure_settings(databases)
+        # 确保定义了默认数据库
         if databases == {}:
             databases[DEFAULT_DB_ALIAS] = {"ENGINE": "django.db.backends.dummy"}
         elif DEFAULT_DB_ALIAS not in databases:
             raise ImproperlyConfigured(
-                f"You must define a '{DEFAULT_DB_ALIAS}' database."
+                f"必须定义一个 '{DEFAULT_DB_ALIAS}' 数据库。"
             )
         elif databases[DEFAULT_DB_ALIAS] == {}:
             databases[DEFAULT_DB_ALIAS]["ENGINE"] = "django.db.backends.dummy"
 
-        # Configure default settings.
+        # 配置默认设置。
         for conn in databases.values():
             conn.setdefault("ATOMIC_REQUESTS", False)
             conn.setdefault("AUTOCOMMIT", True)
@@ -183,15 +200,15 @@ class ConnectionHandler(BaseConnectionHandler):
 
     @property
     def databases(self):
-        # Maintained for backward compatibility as some 3rd party packages have
-        # made use of this private API in the past. It is no longer used within
-        # Django itself.
+        # 为了向后兼容，一些第三方包在过去使用了这个私有 API。
+        # 在 Django 内部不再使用此属性。
         return self.settings
 
     def create_connection(self, alias):
         db = self.settings[alias]
         backend = load_backend(db["ENGINE"])
         return backend.DatabaseWrapper(db, alias)
+
 
 
 class ConnectionRouter:

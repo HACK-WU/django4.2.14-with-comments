@@ -31,9 +31,16 @@ class BaseDatabaseIntrospection:
 
     def identifier_converter(self, name):
         """
-        Apply a conversion to the identifier for the purposes of comparison.
+        应用转换规则对标识符进行处理，以便进行比较操作。
 
-        The default identifier converter is for case sensitive comparison.
+        在默认情况下，标识符转换器用于进行大小写敏感的比较。此函数的存在是为了确保在比较标识符时，
+        可以根据需要应用特定的比较规则，比如忽略大小写差异进行比较。
+
+        参数:
+        name: 待进行转换和比较的标识符。
+
+        返回:
+        返回经过转换规则处理后的标识符，以便进行后续的比较操作。
         """
         return name
 
