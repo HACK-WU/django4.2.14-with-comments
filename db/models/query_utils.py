@@ -34,18 +34,27 @@ def subclasses(cls):
 
 class Q(tree.Node):
     """
-    Encapsulate filters as objects that can then be combined logically (using
-    `&` and `|`).
+    封装过滤条件为对象，支持逻辑组合（使用 `&` 和 `|`）。
     """
 
-    # Connection types
+    # 连接类型常量
     AND = "AND"
     OR = "OR"
     XOR = "XOR"
+    # 默认连接类型
     default = AND
+    # 是否条件性
     conditional = True
 
     def __init__(self, *args, _connector=None, _negated=False, **kwargs):
+        """
+        初始化Q对象。
+
+        :param args: 位置参数，代表Q对象的子节点。
+        :param _connector: 连接类型，默认为None。
+        :param _negated: 是否否定，默认为False。
+        :param kwargs: 关键字参数，代表Q对象的子节点。
+        """
         super().__init__(
             children=[*args, *sorted(kwargs.items())],
             connector=_connector,
@@ -53,6 +62,13 @@ class Q(tree.Node):
         )
 
     def _combine(self, other, conn):
+        """
+        组合两个Q对象。
+
+        :param other: 另一个Q对象。
+        :param conn: 连接类型。
+        :return: 组合后的Q对象。
+        """
         if getattr(other, "conditional", False) is False:
             raise TypeError(other)
         if not self:
@@ -66,15 +82,38 @@ class Q(tree.Node):
         return obj
 
     def __or__(self, other):
+        """
+        重载`|`操作符，实现Q对象的逻辑或。
+
+        :param other: 另一个Q对象。
+        :return: 逻辑或结果的Q对象。
+        """
         return self._combine(other, self.OR)
 
     def __and__(self, other):
+        """
+        重载`&`操作符，实现Q对象的逻辑与。
+
+        :param other: 另一个Q对象。
+        :return: 逻辑与结果的Q对象。
+        """
         return self._combine(other, self.AND)
 
     def __xor__(self, other):
+        """
+        重载`^`操作符，实现Q对象的逻辑异或。
+
+        :param other: 另一个Q对象。
+        :return: 逻辑异或结果的Q对象。
+        """
         return self._combine(other, self.XOR)
 
     def __invert__(self):
+        """
+        重载`~`操作符，实现Q对象的逻辑非。
+
+        :return: 逻辑非结果的Q对象。
+        """
         obj = self.copy()
         obj.negate()
         return obj
@@ -82,8 +121,19 @@ class Q(tree.Node):
     def resolve_expression(
         self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False
     ):
+        """
+        解析Q对象为SQL查询条件。
+
+        :param query: 查询对象。
+        :param allow_joins: 是否允许连接，默认为True。
+        :param reuse: 重用的别名集合，默认为None。
+        :param summarize: 是否汇总，默认为False。
+        :param for_save: 是否用于保存，默认为False。
+        :return: 解析后的SQL条件子句。
+        """
         # We must promote any new joins to left outer joins so that when Q is
         # used as an expression, rows aren't filtered due to joins.
+        # 为确保当Q用作表达式时不会因连接而过滤行，需将新连接提升为左外连接。
         clause, joins = query._add_q(
             self,
             reuse,
@@ -99,11 +149,14 @@ class Q(tree.Node):
         """
         Recursively yield this Q object and all subexpressions, in depth-first
         order.
+        以深度优先顺序递归生成此Q对象及其所有子表达式。
+
+        :return: Q对象及其子表达式的生成器。
         """
         yield self
         for child in self.children:
             if isinstance(child, tuple):
-                # Use the lookup.
+                # 使用lookup转换。
                 child = child[1]
             if hasattr(child, "flatten"):
                 yield from child.flatten()
@@ -114,8 +167,12 @@ class Q(tree.Node):
         """
         Do a database query to check if the expressions of the Q instance
         matches against the expressions.
+        执行数据库查询，检查Q实例的表达式是否与给定表达式匹配。
+
+        :param against: 用于比较的表达式字典。
+        :param using: 数据库别名，默认为DEFAULT_DB_ALIAS。
+        :return: 表达式是否匹配的布尔值。
         """
-        # Avoid circular imports.
         from django.db.models import BooleanField, Value
         from django.db.models.functions import Coalesce
         from django.db.models.sql import Query
@@ -127,7 +184,7 @@ class Q(tree.Node):
                 value = Value(value)
             query.add_annotation(value, name, select=False)
         query.add_annotation(Value(1), "_check")
-        # This will raise a FieldError if a field is missing in "against".
+        # 检查字段是否缺失，并根据数据库特性调整查询逻辑。
         if connections[using].features.supports_comparing_boolean_expr:
             query.add_q(Q(Coalesce(self, True, output_field=BooleanField())))
         else:
@@ -140,6 +197,11 @@ class Q(tree.Node):
             return True
 
     def deconstruct(self):
+        """
+        解构Q对象，生成可用于重建对象的路径、参数和关键字参数。
+
+        :return: 包含对象路径、位置参数和关键字参数的元组。
+        """
         path = "%s.%s" % (self.__class__.__module__, self.__class__.__name__)
         if path.startswith("django.db.models.query_utils"):
             path = path.replace("django.db.models.query_utils", "django.db.models")

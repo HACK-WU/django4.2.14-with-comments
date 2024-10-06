@@ -1543,50 +1543,72 @@ class SQLCompiler:
         subclasses such as InsertQuery). It's possible, however, that no query
         is needed, as the filters describe an empty set. In that case, None is
         returned, to avoid any unnecessary database interaction.
+        
+        执行SQL查询并返回结果。根据result_type的值决定返回单个数据项还是结果的迭代器。
+        
+        参数:
+        - result_type: 指定查询返回的结果类型，可以是MULTI（返回所有行），SINGLE（仅返回一行），或None。
+        - chunked_fetch: 是否使用分块获取结果。
+        - chunk_size: 分块获取时，每次获取的结果数量。
+        
+        返回值:
+        - 如果result_type是SINGLE，返回单个数据项。
+        - 如果result_type是MULTI，返回结果的迭代器。
+        - 如果不需要执行查询（例如，过滤器描述了一个空集），则返回None以避免不必要的数据库交互。
         """
+        # 确定结果类型，默认为无结果
         result_type = result_type or NO_RESULTS
         try:
+            # 生成SQL查询语句和参数
             sql, params = self.as_sql()
+            # 如果没有SQL语句，抛出空结果集异常
             if not sql:
                 raise EmptyResultSet
         except EmptyResultSet:
+            # 如果结果集为空，根据result_type返回空迭代器或None
             if result_type == MULTI:
                 return iter([])
             else:
                 return
+        # 根据是否分块获取结果，选择相应的游标
         if chunked_fetch:
             cursor = self.connection.chunked_cursor()
         else:
             cursor = self.connection.cursor()
         try:
+            # 执行SQL查询
             cursor.execute(sql, params)
         except Exception:
-            # Might fail for server-side cursors (e.g. connection closed)
+            # 处理执行异常，关闭游标并抛出异常
             cursor.close()
             raise
-
+    
+        # 根据result_type处理查询结果
         if result_type == CURSOR:
-            # Give the caller the cursor to process and close.
+            # 直接返回游标
             return cursor
         if result_type == SINGLE:
+            # 对于单个结果，使用fetchone获取单行数据，并关闭游标
             try:
                 val = cursor.fetchone()
                 if val:
                     return val[0 : self.col_count]
                 return val
             finally:
-                # done with the cursor
                 cursor.close()
         if result_type == NO_RESULTS:
+            # 如果没有结果，关闭游标并返回None
             cursor.close()
             return
-
+    
+        # 使用迭代器处理查询结果
         result = cursor_iter(
             cursor,
             self.connection.features.empty_fetchmany_value,
             self.col_count if self.has_extra_select else None,
             chunk_size,
         )
+        # 根据是否分块获取结果和数据库是否支持分块读取，决定是否将结果全部读入内存
         if not chunked_fetch or not self.connection.features.can_use_chunked_reads:
             # If we are using non-chunked reads, we return the same data
             # structure as normally, but ensure it is all read into memory

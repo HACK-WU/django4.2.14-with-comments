@@ -145,6 +145,8 @@ class RawQuery:
             # evaluate the entire query up front.
             result = list(self.cursor)
         else:
+            # self.cursor -> django.db.backends.mysql.base.CursorWrapper
+            # CursorWrapper中定义了__iter__方法，可返回一次“fetchone”查询结果
             result = self.cursor
         return iter(result)
 
@@ -191,6 +193,7 @@ class RawQuery:
 
 ExplainInfo = namedtuple("ExplainInfo", ("format", "options"))
 
+
 class Query(BaseExpression):
     """A single SQL query."""
 
@@ -211,6 +214,7 @@ class Query(BaseExpression):
     # 查询的默认列和排序设置
     default_cols = True
     default_ordering = True
+    # 标准排序标志,True表示ASC升序，False表示DESC降序
     standard_ordering = True
 
     # 过滤器的粘性标志和子查询标志
@@ -1580,6 +1584,18 @@ class Query(BaseExpression):
         """
         A preprocessor for the internal _add_q(). Responsible for doing final
         join promotion.
+        
+        对内部方法 _add_q() 进行预处理。负责执行最终的连接提升。
+        
+        参数:
+        - q_object: 要添加到查询中的 Q 对象
+        
+        返回值: 无
+        
+        注释:
+        - 此方法主要负责处理查询中的连接提升操作，确保添加的 Q 对象能与现有条件正确组合。
+        - 现有连接类型为 INNER JOIN 时，新添加的连接必须保持为 INNER JOIN。
+        - 现有连接类型为 OUTER JOIN 时，可以降级为 INNER JOIN，但仅在特定条件下。
         """
         # For join promotion this case is doing an AND for the added q_object
         # and existing conditions. So, any existing inner join forces the join
@@ -1587,12 +1603,21 @@ class Query(BaseExpression):
         # (Consider case where rel_a is LOUTER and rel_a__col=1 is added - if
         # rel_a doesn't produce any rows, then the whole condition must fail.
         # So, demotion is OK.
+        
+        # 对于连接提升，此情况对添加的 q_object 和现有条件进行 AND 操作。
+        # 因此，任何现有的 INNER JOIN 都会强制保持连接类型不变。
+        # 但是，现有的 OUTER JOIN 可以在特定情况下降级为 INNER JOIN。
+        # 例如，如果 rel_a 是 LOUTER 并且添加了 rel_a__col=1，那么如果 rel_a 没有生成任何行，
+        # 整个条件必须失败。因此，降级是可行的。
         existing_inner = {
             a for a in self.alias_map if self.alias_map[a].join_type == INNER
         }
+        # 调用内部方法 _add_q 添加 q_object 到查询中，并获取添加的结果和使用的别名集合
         clause, _ = self._add_q(q_object, self.used_aliases)
+        # 如果添加的结果不为空，则将其添加到 WHERE 子句中，并使用 AND 运算符连接
         if clause:
             self.where.add(clause, AND)
+        # 对现有的 INNER JOIN 进行降级操作，以确保查询的正确性
         self.demote_joins(existing_inner)
 
     def build_where(self, filter_expr):
@@ -2128,18 +2153,34 @@ class Query(BaseExpression):
 
         Apply any limits passed in here to the existing constraints. Add low
         to the current low value and clamp both to any existing high value.
+        
+        调整检索的行数限制。可以通过设置low和high参数来实现，
+        这样使得读写起来更加符合Python习惯。当生成SQL查询时，
+        将它们转换为相应的offset和limit值。
+    
+        将这里传入的任何限制应用于现有的约束上。将low加到当前的low值上，
+        并根据任何现有的high值进行限制。
         """
+        # 如果high参数被提供
         if high is not None:
+            # 如果已经存在high_mark
             if self.high_mark is not None:
+                # 计算新的high_mark，确保它不会超过原有的high_mark
                 self.high_mark = min(self.high_mark, self.low_mark + high)
             else:
+                # 如果不存在high_mark，基于low_mark和high参数计算新的high_mark
                 self.high_mark = self.low_mark + high
+        # 如果low参数被提供
         if low is not None:
+            # 如果已经存在high_mark
             if self.high_mark is not None:
+                # 计算新的low_mark，确保它不会超过原有的high_mark
                 self.low_mark = min(self.high_mark, self.low_mark + low)
             else:
+                # 如果不存在high_mark，基于low_mark和low参数计算新的low_mark
                 self.low_mark = self.low_mark + low
 
+        # 如果low_mark和high_mark相等，则设置为空
         if self.low_mark == self.high_mark:
             self.set_empty()
 
@@ -2149,6 +2190,15 @@ class Query(BaseExpression):
 
     @property
     def is_sliced(self):
+        """
+        判断对象是否已被切片。
+
+        通过检查low_mark是否不等于0或者high_mark是否不为None来确定。
+        这个属性用于在外部判断对象内部的标记是否表明了一个切片操作。
+
+        Returns:
+            bool: 如果对象已被切片，则返回True，否则返回False。
+        """
         return self.low_mark != 0 or self.high_mark is not None
 
     def has_limit_one(self):

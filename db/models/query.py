@@ -45,7 +45,7 @@ REPR_OUTPUT_SIZE = 20
 
 class BaseIterable:
     def __init__(
-        self, queryset, chunked_fetch=False, chunk_size=GET_ITERATOR_CHUNK_SIZE
+            self, queryset, chunked_fetch=False, chunk_size=GET_ITERATOR_CHUNK_SIZE
     ):
         self.queryset = queryset
         self.chunked_fetch = chunked_fetch
@@ -80,28 +80,39 @@ class BaseIterable:
 
 
 class ModelIterable(BaseIterable):
-    """Iterable that yields a model instance for each row."""
+    """
+    Iterable that yields a model instance for each row.
+    为每一行数据，生产一个实例模型
+    """
 
     def __iter__(self):
+        # 获取查询集、数据库和查询编译器
         queryset = self.queryset
-        db = queryset.db
+        db = queryset.db   # The database connection to use
         compiler = queryset.query.get_compiler(using=db)
         # Execute the query. This will also fill compiler.select, klass_info,
         # and annotations.
+        # 执行查询，同时填充compiler.select、klass_info和annotations
         results = compiler.execute_sql(
             chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
         )
+        
+        # 提取编译器中的选择信息、类信息和注解列映射
         select, klass_info, annotation_col_map = (
             compiler.select,
             compiler.klass_info,
             compiler.annotation_col_map,
         )
+        
+        # 获取模型类、选择的字段范围和初始化列表
         model_cls = klass_info["model"]
         select_fields = klass_info["select_fields"]
         model_fields_start, model_fields_end = select_fields[0], select_fields[-1] + 1
         init_list = [
             f[0].target.attname for f in select[model_fields_start:model_fields_end]
         ]
+        
+        # 获取相关对象填充器和已知相关对象
         related_populators = get_related_populators(klass_info, select, db)
         known_related_objects = [
             (
@@ -118,17 +129,24 @@ class ModelIterable(BaseIterable):
             )
             for field, related_objs in queryset._known_related_objects.items()
         ]
+        
+        # 遍历查询结果，为每一行创建模型实例
         for row in compiler.results_iter(results):
             obj = model_cls.from_db(
                 db, init_list, row[model_fields_start:model_fields_end]
             )
+            
+            # 填充相关对象
             for rel_populator in related_populators:
                 rel_populator.populate(row, obj)
+            
+            # 如果有注解列映射，设置注解属性
             if annotation_col_map:
                 for attr_name, col_pos in annotation_col_map.items():
                     setattr(obj, attr_name, row[col_pos])
-
+                    
             # Add the known related objects to the model.
+            # 添加已知的相关对象到模型实例
             for field, rel_objs, rel_getter in known_related_objects:
                 # Avoid overwriting objects loaded by, e.g., select_related().
                 if field.is_cached(obj):
@@ -137,12 +155,12 @@ class ModelIterable(BaseIterable):
                 try:
                     rel_obj = rel_objs[rel_obj_id]
                 except KeyError:
-                    pass  # May happen in qs1 | qs2 scenarios.
+                    pass  # 可能发生在 qs1 | qs2 的情景中
                 else:
                     setattr(obj, field.name, rel_obj)
 
+            # 生成并返回模型实例
             yield obj
-
 
 class RawModelIterable(BaseIterable):
     """
@@ -206,7 +224,7 @@ class ValuesIterable(BaseIterable):
         ]
         indexes = range(len(names))
         for row in compiler.results_iter(
-            chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
+                chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
         ):
             yield {names[i]: row[i] for i in indexes}
 
@@ -283,29 +301,42 @@ class FlatValuesListIterable(BaseIterable):
         queryset = self.queryset
         compiler = queryset.query.get_compiler(queryset.db)
         for row in compiler.results_iter(
-            chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
+                chunked_fetch=self.chunked_fetch, chunk_size=self.chunk_size
         ):
             yield row[0]
 
 
+# 添加中文注释，保留原有的英文注解
 class QuerySet(AltersData):
-    """Represent a lazy database lookup for a set of objects."""
+    """Represent a lazy database lookup for a set of objects.
+
+    该类继承自AltersData，表示要从数据库中查询的一组对象。
+    它支持延迟加载，这意味着直到数据被访问时才执行实际的数据库查询。
+    """
 
     def __init__(self, model=None, query=None, using=None, hints=None):
-        self.model = model
-        self._db = using
-        self._hints = hints or {}
-        self._query = query or sql.Query(self.model)
-        self._result_cache = None
-        self._sticky_filter = False
-        self._for_write = False
-        self._prefetch_related_lookups = ()
-        self._prefetch_done = False
-        self._known_related_objects = {}  # {rel_field: {pk: rel_obj}}
-        self._iterable_class = ModelIterable
-        self._fields = None
-        self._defer_next_filter = False
-        self._deferred_filter = None
+        """Initialize the QuerySet object.
+        
+        Parameters:
+        - model: The model class to be queried.
+        - query: The initial query object.
+        - using: The database connection to use.
+        - hints: Additional hints for query optimization.
+        """
+        self.model = model  # The model class to be queried
+        self._db = using  # The database connection to use
+        self._hints = hints or {}  # Additional hints for query optimization
+        self._query = query or sql.Query(self.model)  # The initial query object
+        self._result_cache = None  # Cache for query results
+        self._sticky_filter = False  # Whether the filter conditions stick
+        self._for_write = False  # Whether the queryset is for write operations
+        self._prefetch_related_lookups = ()  # Prefetch related lookups
+        self._prefetch_done = False  # Whether prefetch has been executed
+        self._known_related_objects = {}  # {rel_field: {pk: rel_obj}}, used to store known related objects
+        self._iterable_class = ModelIterable  # The class used to create the iterable object
+        self._fields = None  # Specified fields to be queried
+        self._defer_next_filter = False  # Whether to defer the next filter
+        self._deferred_filter = None  # The deferred filter condition
 
     @property
     def query(self):
@@ -413,21 +444,27 @@ class QuerySet(AltersData):
         return bool(self._result_cache)
 
     def __getitem__(self, k):
-        """Retrieve an item or slice from the set of results."""
+        """
+        Retrieve an item or slice from the set of results.
+        通过索引或者切片的方式，获取到数据。
+        """
+        # k既不是数字，也不是切片，报错
         if not isinstance(k, (int, slice)):
             raise TypeError(
                 "QuerySet indices must be integers or slices, not %s."
                 % type(k).__name__
             )
+        # 检查索引是否为负数，负数不支持，以及切片是否包含负数
         if (isinstance(k, int) and k < 0) or (
-            isinstance(k, slice)
-            and (
-                (k.start is not None and k.start < 0)
-                or (k.stop is not None and k.stop < 0)
-            )
+                isinstance(k, slice)
+                and (
+                        (k.start is not None and k.start < 0)
+                        or (k.stop is not None and k.stop < 0)
+                )
         ):
             raise ValueError("Negative indexing is not supported.")
 
+        # 从缓存中获取
         if self._result_cache is not None:
             return self._result_cache[k]
 
@@ -562,7 +599,7 @@ class QuerySet(AltersData):
             "DISABLE_SERVER_SIDE_CURSORS"
         )
         async for item in self._iterable_class(
-            self, chunked_fetch=use_chunked_fetch, chunk_size=chunk_size
+                self, chunked_fetch=use_chunked_fetch, chunk_size=chunk_size
         ):
             yield item
 
@@ -612,25 +649,46 @@ class QuerySet(AltersData):
 
     def get(self, *args, **kwargs):
         """
-        Perform the query and return a single object matching the given
-        keyword arguments.
+        执行查询并返回匹配给定关键字参数的单个对象。
+        
+        参数:
+        *args: 位置参数，用于过滤查询结果。
+        **kwargs: 关键字参数，用于过滤查询结果。
+        
+        返回:
+        匹配查询条件的单个对象。
+        
+        可能引发的异常:
+        NotSupportedError: 如果在使用特定组合器后尝试使用过滤条件。
+        self.model.DoesNotExist: 如果没有找到匹配查询条件的对象。
+        self.model.MultipleObjectsReturned: 如果查询返回了多个对象。
         """
+        # 检查是否在使用组合器后尝试使用过滤条件，如果是，抛出不支持的错误
         if self.query.combinator and (args or kwargs):
             raise NotSupportedError(
                 "Calling QuerySet.get(...) with filters after %s() is not "
                 "supported." % self.query.combinator
             )
+        
+        # 根据是否存在组合器，决定是链式调用还是直接过滤
         clone = self._chain() if self.query.combinator else self.filter(*args, **kwargs)
+                # 如果可以进行过滤且没有distinct字段，对查询结果进行排序
         if self.query.can_filter() and not self.query.distinct_fields:
             clone = clone.order_by()
+        
+        # 设置查询限制，除非使用了select_for_update且数据库支持该特性
         limit = None
         if (
-            not clone.query.select_for_update
-            or connections[clone.db].features.supports_select_for_update_with_limit
+                not clone.query.select_for_update
+                or connections[clone.db].features.supports_select_for_update_with_limit
         ):
             limit = MAX_GET_RESULTS
             clone.query.set_limits(high=limit)
+        
+        # 获取查询结果的数量
         num = len(clone)
+        
+        # 根据查询结果的数量，返回对象或抛出异常
         if num == 1:
             return clone._result_cache[0]
         if not num:
@@ -669,7 +727,7 @@ class QuerySet(AltersData):
             obj._prepare_related_fields_for_save(operation_name="bulk_create")
 
     def _check_bulk_create_options(
-        self, ignore_conflicts, update_conflicts, update_fields, unique_fields
+            self, ignore_conflicts, update_conflicts, update_fields, unique_fields
     ):
         if ignore_conflicts and update_conflicts:
             raise ValueError(
@@ -723,13 +781,13 @@ class QuerySet(AltersData):
         return None
 
     def bulk_create(
-        self,
-        objs,
-        batch_size=None,
-        ignore_conflicts=False,
-        update_conflicts=False,
-        update_fields=None,
-        unique_fields=None,
+            self,
+            objs,
+            batch_size=None,
+            ignore_conflicts=False,
+            update_conflicts=False,
+            update_fields=None,
+            unique_fields=None,
     ):
         """
         Insert each of the instances into the database. Do *not* call
@@ -810,8 +868,8 @@ class QuerySet(AltersData):
                 )
                 connection = connections[self.db]
                 if (
-                    connection.features.can_return_rows_from_bulk_insert
-                    and on_conflict is None
+                        connection.features.can_return_rows_from_bulk_insert
+                        and on_conflict is None
                 ):
                     assert len(returned_columns) == len(objs_without_pk)
                 for obj_without_pk, results in zip(objs_without_pk, returned_columns):
@@ -823,13 +881,13 @@ class QuerySet(AltersData):
         return objs
 
     async def abulk_create(
-        self,
-        objs,
-        batch_size=None,
-        ignore_conflicts=False,
-        update_conflicts=False,
-        update_fields=None,
-        unique_fields=None,
+            self,
+            objs,
+            batch_size=None,
+            ignore_conflicts=False,
+            update_conflicts=False,
+            update_fields=None,
+            unique_fields=None,
     ):
         return await sync_to_async(self.bulk_create)(
             objs=objs,
@@ -869,7 +927,7 @@ class QuerySet(AltersData):
         max_batch_size = connection.ops.bulk_batch_size(["pk", "pk"] + fields, objs)
         batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size
         requires_casting = connection.features.requires_casted_case_in_updates
-        batches = (objs[i : i + batch_size] for i in range(0, len(objs), batch_size))
+        batches = (objs[i: i + batch_size] for i in range(0, len(objs), batch_size))
         updates = []
         for batch_objs in batches:
             update_kwargs = {}
@@ -962,7 +1020,7 @@ class QuerySet(AltersData):
                 # update_fields list.
                 for field in self.model._meta.local_concrete_fields:
                     if not (
-                        field.primary_key or field.__class__.pre_save is Field.pre_save
+                            field.primary_key or field.__class__.pre_save is Field.pre_save
                     ):
                         update_fields.add(field.name)
                         if field.name != field.attname:
@@ -1087,10 +1145,10 @@ class QuerySet(AltersData):
             if len(constraint.fields) == 1
         ]
         if (
-            field_name != "pk"
-            and not opts.get_field(field_name).unique
-            and field_name not in unique_fields
-            and self.query.distinct_fields != (field_name,)
+                field_name != "pk"
+                and not opts.get_field(field_name).unique
+                and field_name not in unique_fields
+                and self.query.distinct_fields != (field_name,)
         ):
             raise ValueError(
                 "in_bulk()'s field_name must be a unique field but %r isn't."
@@ -1107,7 +1165,7 @@ class QuerySet(AltersData):
             if batch_size and batch_size < len(id_list):
                 qs = ()
                 for offset in range(0, len(id_list), batch_size):
-                    batch = id_list[offset : offset + batch_size]
+                    batch = id_list[offset: offset + batch_size]
                     qs += tuple(self.filter(**{filter_key: batch}).order_by())
             else:
                 qs = self.filter(**{filter_key: id_list}).order_by()
@@ -1375,7 +1433,7 @@ class QuerySet(AltersData):
     # RemovedInDjango50Warning: when the deprecation ends, remove is_dst
     # argument.
     def datetimes(
-        self, field_name, kind, order="ASC", tzinfo=None, is_dst=timezone.NOT_PASSED
+            self, field_name, kind, order="ASC", tzinfo=None, is_dst=timezone.NOT_PASSED
     ):
         """
         Return a list of datetime objects representing all available
@@ -1444,14 +1502,41 @@ class QuerySet(AltersData):
         return self._filter_or_exclude(True, args, kwargs)
 
     def _filter_or_exclude(self, negate, args, kwargs):
+        """
+        根据条件筛选或排除链中的元素。
+    
+        此方法用于在查询链中添加筛选条件。它可以根据提供的参数筛选或排除链中的元素。
+        如果提供了args或kwargs参数，并且查询已经被切片，则引发TypeError，因为对切片后的查询进行筛选会导致逻辑错误。
+        如果设置了延迟过滤标志，则将筛选条件延迟到下一次过滤操作；否则，直接在克隆的链上应用筛选条件。
+    
+        参数:
+        - negate: 布尔值，指示是否应排除而不是筛选。
+        - args: 位置参数，用于筛选或排除的条件。
+        - kwargs: 关键字参数，用于筛选或排除的条件。
+    
+        返回:
+        - clone: QuerySet链的克隆，应用了筛选或排除条件。
+    
+        抛出:
+        - TypeError: 如果在切片后的查询上尝试进行筛选操作。
+        """
+        # 检查是否有筛选条件并且查询已经被切片
         if (args or kwargs) and self.query.is_sliced:
             raise TypeError("Cannot filter a query once a slice has been taken.")
+        
+        # 创建查询链的克隆以进行后续操作
         clone = self._chain()
+
+        # 检查是否设置了延迟下一个过滤操作的标志
         if self._defer_next_filter:
+            # 重置延迟标志，并将筛选条件延迟到下一次过滤操作
             self._defer_next_filter = False
             clone._deferred_filter = negate, args, kwargs
         else:
+            # 直接在克隆的链上应用筛选或排除条件
             clone._filter_or_exclude_inplace(negate, args, kwargs)
+        
+        # 返回应用了筛选或排除条件后的克隆链
         return clone
 
     def _filter_or_exclude_inplace(self, negate, args, kwargs):
@@ -1673,13 +1758,13 @@ class QuerySet(AltersData):
         return obj
 
     def extra(
-        self,
-        select=None,
-        where=None,
-        params=None,
-        tables=None,
-        order_by=None,
-        select_params=None,
+            self,
+            select=None,
+            where=None,
+            params=None,
+            tables=None,
+            order_by=None,
+            select_params=None,
     ):
         """Add extra SQL fragments to the query."""
         self._not_support_combined_queries("extra")
@@ -1756,11 +1841,11 @@ class QuerySet(AltersData):
         if self.query.extra_order_by or self.query.order_by:
             return True
         elif (
-            self.query.default_ordering
-            and self.query.get_meta().ordering
-            and
-            # A default ordering doesn't affect GROUP BY queries.
-            not self.query.group_by
+                self.query.default_ordering
+                and self.query.get_meta().ordering
+                and
+                # A default ordering doesn't affect GROUP BY queries.
+                not self.query.group_by
         ):
             return True
         else:
@@ -1778,15 +1863,15 @@ class QuerySet(AltersData):
     ###################
 
     def _insert(
-        self,
-        objs,
-        fields,
-        returning_fields=None,
-        raw=False,
-        using=None,
-        on_conflict=None,
-        update_fields=None,
-        unique_fields=None,
+            self,
+            objs,
+            fields,
+            returning_fields=None,
+            raw=False,
+            using=None,
+            on_conflict=None,
+            update_fields=None,
+            unique_fields=None,
     ):
         """
         Insert a new record for the given model. This provides an interface to
@@ -1808,13 +1893,13 @@ class QuerySet(AltersData):
     _insert.queryset_only = False
 
     def _batched_insert(
-        self,
-        objs,
-        fields,
-        batch_size,
-        on_conflict=None,
-        update_fields=None,
-        unique_fields=None,
+            self,
+            objs,
+            fields,
+            batch_size,
+            on_conflict=None,
+            update_fields=None,
+            unique_fields=None,
     ):
         """
         Helper method for bulk_create() to insert objs one batch at a time.
@@ -1825,7 +1910,7 @@ class QuerySet(AltersData):
         batch_size = min(batch_size, max_batch_size) if batch_size else max_batch_size
         inserted_rows = []
         bulk_return = connection.features.can_return_rows_from_bulk_insert
-        for item in [objs[i : i + batch_size] for i in range(0, len(objs), batch_size)]:
+        for item in [objs[i: i + batch_size] for i in range(0, len(objs), batch_size)]:
             if bulk_return and on_conflict is None:
                 inserted_rows.extend(
                     self._insert(
@@ -1850,30 +1935,54 @@ class QuerySet(AltersData):
         """
         Return a copy of the current QuerySet that's ready for another
         operation.
+        返回当前QuerySet的一个副本，以便进行另一个操作。
+        
+        此方法用于链接调用，允许在新的QuerySet副本上继续进行过滤或其他操作，
+        而不改变原始的QuerySet。这样可以方便地构建复杂的查询。
         """
+        # 克隆当前对象以创建一个新的QuerySet副本
         obj = self._clone()
+
+        # 处理粘性过滤器逻辑，如果存在未处理的粘性过滤器
         if obj._sticky_filter:
+            # 标记新对象的查询过滤器为粘性，以影响后续操作
             obj.query.filter_is_sticky = True
+
+            # 重置当前对象的粘性过滤器标志，因为它已被处理
             obj._sticky_filter = False
+
+        # 返回新的QuerySet对象，准备好进行下一个操作
         return obj
 
     def _clone(self):
         """
         Return a copy of the current QuerySet. A lightweight alternative
         to deepcopy().
+        返回当前QuerySet的一个副本。这是对deepcopy()的一种轻量级替代。
+        
+        该方法被设计用于创建QuerySet的副本，而不复制整个数据库查询对象。
+        这在需要基于当前查询集创建新查询集时特别有用，避免了重复的资源消耗。
         """
+        # 创建一个新的QuerySet实例，使用当前实例的模型、查询链、数据库和提示信息
         c = self.__class__(
             model=self.model,
             query=self.query.chain(),
             using=self._db,
             hints=self._hints,
         )
+        # 复制粘性过滤器状态，这是用于跟踪查询中持续过滤条件的内部属性
         c._sticky_filter = self._sticky_filter
+        # 复制_for_write状态，标识查询是否用于写操作
         c._for_write = self._for_write
+        # 通过切片复制预取相关查找列表，确保新实例的预取相关查找与原实例一致
         c._prefetch_related_lookups = self._prefetch_related_lookups[:]
+        # 复制已知相关对象字典，保持新旧实例间的一致性
         c._known_related_objects = self._known_related_objects
+        # 复制可迭代类定义，确保新实例保持相同的迭代行为
         c._iterable_class = self._iterable_class
+        # 复制字段定义，确保新实例与原实例在字段方面保持一致
         c._fields = self._fields
+        # 返回复制的新QuerySet实例
         return c
 
     def _fetch_all(self):
@@ -1899,9 +2008,9 @@ class QuerySet(AltersData):
     def _merge_sanity_check(self, other):
         """Check that two QuerySet classes may be merged."""
         if self._fields is not None and (
-            set(self.query.values_select) != set(other.query.values_select)
-            or set(self.query.extra_select) != set(other.query.extra_select)
-            or set(self.query.annotation_select) != set(other.query.annotation_select)
+                set(self.query.values_select) != set(other.query.values_select)
+                or set(self.query.extra_select) != set(other.query.extra_select)
+                or set(self.query.annotation_select) != set(other.query.annotation_select)
         ):
             raise TypeError(
                 "Merging '%s' classes must involve the same values in each case."
@@ -1956,7 +2065,21 @@ class QuerySet(AltersData):
             )
 
     def _not_support_combined_queries(self, operation_name):
+        """
+        检查并阻止在使用组合查询后进行的不支持的操作。
+
+        本方法旨在防止在已经执行过查询组合（如union、intersection等）之后，
+        再次调用不支持的查询操作，以避免数据库层面的错误或不明确行为。
+
+        参数:
+        - operation_name: str，尝试调用的查询操作方法名。
+
+        Raises:
+        - NotSupportedError: 如果在使用查询组合后尝试进行不支持的操作，则抛出此异常。
+        """
+        # 检查是否存在查询组合操作
         if self.query.combinator:
+            # 如果存在，则抛出异常，表明不支持的操作
             raise NotSupportedError(
                 "Calling QuerySet.%s() after %s() is not supported."
                 % (operation_name, self.query.combinator)
@@ -1968,7 +2091,7 @@ class QuerySet(AltersData):
 
     def _check_ordering_first_last_queryset_aggregation(self, method):
         if isinstance(self.query.group_by, tuple) and not any(
-            col.output_field is self.model._meta.pk for col in self.query.group_by
+                col.output_field is self.model._meta.pk for col in self.query.group_by
         ):
             raise TypeError(
                 f"Cannot use QuerySet.{method}() on an unordered queryset performing "
@@ -1995,18 +2118,30 @@ class RawQuerySet:
     """
     Provide an iterator which converts the results of raw SQL queries into
     annotated model instances.
+    提供一个迭代器，将原始SQL查询的结果转换为带有注释的模型实例。
     """
 
     def __init__(
-        self,
-        raw_query,
-        model=None,
-        query=None,
-        params=(),
-        translations=None,
-        using=None,
-        hints=None,
+            self,
+            raw_query,
+            model=None,
+            query=None,
+            params=(),
+            translations=None,
+            using=None,
+            hints=None,
     ):
+        """
+        初始化RawQuerySet实例。
+
+        :param raw_query: 原始SQL查询字符串。
+        :param model: 关联的模型类。
+        :param query: SQL查询对象。
+        :param params: 查询参数。
+        :param translations: 列名翻译字典。
+        :param using: 指定的数据库别名。
+        :param hints: 查询提示。
+        """
         self.raw_query = raw_query
         self.model = model
         self._db = using
@@ -2019,7 +2154,12 @@ class RawQuerySet:
         self._prefetch_done = False
 
     def resolve_model_init_order(self):
-        """Resolve the init field names and value positions."""
+        """
+        Resolve the init field names and value positions.
+        解析初始化字段名称和值的位置。
+
+        :return: 元组，包含模型初始化名称、初始化顺序和注释字段。
+        """
         converter = connections[self.db].introspection.identifier_converter
         model_init_fields = [
             f for f in self.model._meta.fields if converter(f.column) in self.columns
@@ -2036,7 +2176,13 @@ class RawQuerySet:
         return model_init_names, model_init_order, annotation_fields
 
     def prefetch_related(self, *lookups):
-        """Same as QuerySet.prefetch_related()"""
+        """
+        Same as QuerySet.prefetch_related()
+        预取相关对象。
+
+        :param lookups: 需要预取的相关字段。
+        :return: 克隆的RawQuerySet实例。
+        """
         clone = self._clone()
         if lookups == (None,):
             clone._prefetch_related_lookups = ()
@@ -2045,11 +2191,19 @@ class RawQuerySet:
         return clone
 
     def _prefetch_related_objects(self):
+        """
+        内部方法，用于预取相关对象。
+        """
         prefetch_related_objects(self._result_cache, *self._prefetch_related_lookups)
         self._prefetch_done = True
 
     def _clone(self):
-        """Same as QuerySet._clone()"""
+        """
+        Same as QuerySet._clone()
+        克隆RawQuerySet实例。
+
+        :return: 克隆的RawQuerySet实例。
+        """
         c = self.__class__(
             self.raw_query,
             model=self.model,
@@ -2063,26 +2217,50 @@ class RawQuerySet:
         return c
 
     def _fetch_all(self):
+        """
+        获取所有结果。
+        """
         if self._result_cache is None:
             self._result_cache = list(self.iterator())
         if self._prefetch_related_lookups and not self._prefetch_done:
             self._prefetch_related_objects()
 
     def __len__(self):
+        """
+        获取结果集长度。
+
+        :return: 结果集长度。
+        """
         self._fetch_all()
         return len(self._result_cache)
 
     def __bool__(self):
+        """
+        判断结果集是否为空。
+
+        :return: 结果集是否为空。
+        """
         self._fetch_all()
         return bool(self._result_cache)
 
     def __iter__(self):
+        """
+        迭代结果集。
+
+        :return: 结果集迭代器。
+        """
         self._fetch_all()
         return iter(self._result_cache)
 
     def __aiter__(self):
-        # Remember, __aiter__ itself is synchronous, it's the thing it returns
-        # that is async!
+        """
+        Remember, __aiter__ itself is synchronous, it's the thing it returns
+        that is async!
+        异步迭代结果集。
+
+        :return: 异步迭代器生成器。
+        """
+
         async def generator():
             await sync_to_async(self._fetch_all)()
             for item in self._result_cache:
@@ -2091,21 +2269,48 @@ class RawQuerySet:
         return generator()
 
     def iterator(self):
+        """
+        获取结果集迭代器。
+
+        :return: 结果集迭代器。
+        """
         yield from RawModelIterable(self)
 
     def __repr__(self):
+        """
+        获取对象的字符串表示。
+
+        :return: 对象字符串表示。
+        """
         return "<%s: %s>" % (self.__class__.__name__, self.query)
 
     def __getitem__(self, k):
+        """
+        获取指定索引/切片的结果。
+
+        :param k: 索引或切片。
+        :return: 指定索引/切片的结果。
+        """
         return list(self)[k]
 
     @property
     def db(self):
-        """Return the database used if this query is executed now."""
+        """
+        Return the database used if this query is executed now.
+        获取当前查询所使用的数据库。
+
+        :return: 数据库别名。
+        """
         return self._db or router.db_for_read(self.model, **self._hints)
 
     def using(self, alias):
-        """Select the database this RawQuerySet should execute against."""
+        """
+        Select the database this RawQuerySet should execute against.
+        指定RawQuerySet执行查询的数据库。
+
+        :param alias: 数据库别名。
+        :return: 指定数据库的RawQuerySet实例。
+        """
         return RawQuerySet(
             self.raw_query,
             model=self.model,
@@ -2120,11 +2325,12 @@ class RawQuerySet:
         """
         A list of model field names in the order they'll appear in the
         query results.
+        获取查询结果中列的顺序。
+
+        :return: 列名列表。
         """
         columns = self.query.get_columns()
-        # Adjust any column names which don't match field names
         for query_name, model_name in self.translations.items():
-            # Ignore translations for nonexistent column names
             try:
                 index = columns.index(query_name)
             except ValueError:
@@ -2135,7 +2341,12 @@ class RawQuerySet:
 
     @cached_property
     def model_fields(self):
-        """A dict mapping column names to model field names."""
+        """
+        A dict mapping column names to model field names.
+        获取模型字段和列名的映射关系。
+
+        :return: 字段和列名的映射字典。
+        """
         converter = connections[self.db].introspection.identifier_converter
         model_fields = {}
         for field in self.model._meta.fields:
@@ -2151,11 +2362,11 @@ class Prefetch:
         # `prefetch_to` is the path to the attribute that stores the result.
         self.prefetch_to = lookup
         if queryset is not None and (
-            isinstance(queryset, RawQuerySet)
-            or (
-                hasattr(queryset, "_iterable_class")
-                and not issubclass(queryset._iterable_class, ModelIterable)
-            )
+                isinstance(queryset, RawQuerySet)
+                or (
+                        hasattr(queryset, "_iterable_class")
+                        and not issubclass(queryset._iterable_class, ModelIterable)
+                )
         ):
             raise ValueError(
                 "Prefetch querysets cannot use raw(), values(), and values_list()."
@@ -2329,9 +2540,9 @@ def prefetch_related_objects(model_instances, *related_lookups):
                 # are already on an automatically added lookup, don't add
                 # the new lookups from relationships we've seen already.
                 if not (
-                    prefetch_to in done_queries
-                    and lookup in auto_lookups
-                    and descriptor in followed_descriptors
+                        prefetch_to in done_queries
+                        and lookup in auto_lookups
+                        and descriptor in followed_descriptors
                 ):
                     done_queries[prefetch_to] = obj_list
                     new_lookups = normalize_prefetch_lookups(
@@ -2414,9 +2625,8 @@ def get_prefetcher(instance, through_attr, to_attr):
                     # Special case cached_property instances because hasattr
                     # triggers attribute computation and assignment.
                     if isinstance(
-                        getattr(instance.__class__, to_attr, None), cached_property
+                            getattr(instance.__class__, to_attr, None), cached_property
                     ):
-
                         def has_cached_property(instance):
                             return to_attr in instance.__dict__
 
@@ -2583,7 +2793,7 @@ class RelatedPopulator:
             self.cols_start = select_fields[0]
             self.cols_end = select_fields[-1] + 1
             self.init_list = [
-                f[0].target.attname for f in select[self.cols_start : self.cols_end]
+                f[0].target.attname for f in select[self.cols_start: self.cols_end]
             ]
             self.reorder_for_init = None
         else:
@@ -2610,7 +2820,7 @@ class RelatedPopulator:
         if self.reorder_for_init:
             obj_data = self.reorder_for_init(row)
         else:
-            obj_data = row[self.cols_start : self.cols_end]
+            obj_data = row[self.cols_start: self.cols_end]
         if obj_data[self.pk_idx] is None:
             obj = None
         else:
