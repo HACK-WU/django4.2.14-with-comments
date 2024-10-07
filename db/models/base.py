@@ -93,12 +93,28 @@ class ModelBase(type):
     """Metaclass for all models."""
 
     def __new__(cls, name, bases, attrs, **kwargs):
+        """
+        1、子类检查：确保仅对Model子类执行初始化。
+        2、类属性构建：从传入的属性中分离出特定元数据，并创建新类。
+        3、错误处理：验证模型配置（如app_label）并处理抽象模型和代理模型。
+        4、属性添加：将具有contribute_to_class方法的属性添加到新类中。
+        5、多表继承支持：处理多表继承时父类链接字段。
+        6、注册模型：完成模型准备并注册到Django应用中。
+        简而言之，此方法负责创建、配置和注册Django模型类。
+
+        :param name: 类的名称
+        :param bases: 父类
+        :param attrs: 一个字典，封装了类的属性和方法
+        :param kwargs:
+        """
         super_new = super().__new__
 
         # Also ensure initialization is only performed for subclasses of Model
         # (excluding Model class itself).
+        # 1、bases是创建该类的父类，到Model类为止
         parents = [b for b in bases if isinstance(b, ModelBase)]
         if not parents:
+            # 没有parents，即该类为Model类，换言之，如果是Model类则直接创建
             return super_new(cls, name, bases, attrs)
 
         # Create the class.
@@ -107,16 +123,22 @@ class ModelBase(type):
         classcell = attrs.pop("__classcell__", None)
         if classcell is not None:
             new_attrs["__classcell__"] = classcell
-        attr_meta = attrs.pop("Meta", None)
+
+        # 2、这里将模型类中定义的Meta类取出来赋给attr_meta变量，如有没有定义，为None
+        attr_meta = attrs.pop("Meta", None)     # 注意调用pop()方法弹出
         # Pass all attrs without a (Django-specific) contribute_to_class()
         # method to type.__new__() so that they're properly initialized
         # (i.e. __set_name__()).
         contributable_attrs = {}
+        # 3、遍历原来类中定义的所有属性，不包括Meta，前面已经弹出
         for obj_name, obj in attrs.items():
+            # 判断obj中是否有'has_contribute_to_class'属性
             if _has_contribute_to_class(obj):
                 contributable_attrs[obj_name] = obj
             else:
                 new_attrs[obj_name] = obj
+        # 4、创建类，传入类名、继承的父类、属性、其他参数
+        # new_attrs排除了值为Filed对象的属性
         new_class = super_new(cls, name, bases, new_attrs, **kwargs)
 
         abstract = getattr(attr_meta, "abstract", False)
@@ -126,6 +148,7 @@ class ModelBase(type):
         app_label = None
 
         # Look for an application configuration to attach the model to.
+        # 5、查找模型类对应的app配置信息
         app_config = apps.get_containing_app_config(module)
 
         if getattr(meta, "app_label", None) is None:
@@ -139,7 +162,7 @@ class ModelBase(type):
 
             else:
                 app_label = app_config.label
-
+        # 将app_label添加到模型类的_meta属性中
         new_class.add_to_class("_meta", Options(meta, app_label))
         if not abstract:
             new_class.add_to_class(
@@ -190,15 +213,18 @@ class ModelBase(type):
 
         # Add remaining attributes (those with a contribute_to_class() method)
         # to the class.
+        # 6、将剩余的属性（那些包含contribute_to_class()方法的属性）添加到new_class中
         for obj_name, obj in contributable_attrs.items():
             new_class.add_to_class(obj_name, obj)
 
         # All the fields of any type declared on this model
+        # 在该模型类中定义的所有Field字段
         new_fields = chain(
             new_class._meta.local_fields,
             new_class._meta.local_many_to_many,
             new_class._meta.private_fields,
         )
+        # 得到在该模型类中定义的所有Field字段名称，类似与得到表的所有字段名称
         field_names = {f.name for f in new_fields}
 
         # Basic setup for proxy models.
@@ -230,21 +256,25 @@ class ModelBase(type):
             new_class._meta.concrete_model = new_class
 
         # Collect the parent links for multi-table inheritance.
+        # 7、处理多表继承中关于父链接的字段
         parent_links = {}
         for base in reversed([new_class] + parents):
             # Conceptually equivalent to `if base is Model`.
+            # 在概念上等于`if base is Model`
             if not hasattr(base, "_meta"):
                 continue
             # Skip concrete parent classes.
             if base != new_class and not base._meta.abstract:
                 continue
             # Locate OneToOneField instances.
+            # 定位OneToOneField实例
             for field in base._meta.local_fields:
                 if isinstance(field, OneToOneField) and field.remote_field.parent_link:
                     related = resolve_relation(new_class, field.remote_field.model)
                     parent_links[make_model_tuple(related)] = field
 
         # Track fields inherited from base models.
+        # 8.追踪从父类中继承的字段
         inherited_attributes = set()
         # Do the appropriate setup for any model parents.
         for base in new_class.mro():
@@ -353,7 +383,7 @@ class ModelBase(type):
         new_class._meta.indexes = [
             copy.deepcopy(idx) for idx in new_class._meta.indexes
         ]
-
+        # 如果是抽象类，设置相关属性，然后返回该类
         if abstract:
             # Abstract base models can't be instantiated and don't appear in
             # the list of models for an app. We do the final setup for them a
@@ -361,7 +391,7 @@ class ModelBase(type):
             attr_meta.abstract = False
             new_class.Meta = attr_meta
             return new_class
-
+        # 9、调用_prepare()方法
         new_class._prepare()
         new_class._meta.apps.register_model(new_class._meta.app_label, new_class)
         return new_class
@@ -374,6 +404,7 @@ class ModelBase(type):
 
     def _prepare(cls):
         """Create some methods once self._meta has been populated."""
+        # 元信息，在魔法函数__new__()中设置
         opts = cls._meta
         opts._prepare(cls)
 
@@ -408,12 +439,15 @@ class ModelBase(type):
         if get_absolute_url_override:
             setattr(cls, "get_absolute_url", get_absolute_url_override)
 
+        # 没有设置对应的managers
         if not opts.managers:
+            # 不允许在字段中出现 objects字段
             if any(f.name == "objects" for f in opts.fields):
                 raise ValueError(
                     "Model %s must specify a custom Manager, because it has a "
                     "field named 'objects'." % cls.__name__
                 )
+            # 得到manager对象
             manager = Manager()
             manager.auto_created = True
             cls.add_to_class("objects", manager)
